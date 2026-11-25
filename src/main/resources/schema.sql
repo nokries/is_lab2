@@ -1,16 +1,3 @@
--- =====================================================================
--- Схема БД. Выполняется при каждом старте приложения (spring.sql.init.mode=always),
--- поэтому всё идемпотентно: CREATE ... IF NOT EXISTS.
---
--- Требования из комментариев к полям реализованы на уровне БД:
---   "не может быть null"          -> NOT NULL
---   "должно быть больше 0"        -> CHECK (... > 0)
---   "строка не может быть пустой" -> CHECK (btrim(...) <> '')
---   "максимум 735"                -> CHECK (x <= 735)
---   "id генерируется БД"          -> последовательность + DEFAULT nextval(...)
--- На уровне ORM те же правила заданы аннотациями Bean Validation в сущностях.
--- =====================================================================
-
 CREATE SEQUENCE IF NOT EXISTS coordinates_seq    START WITH 1 INCREMENT BY 1;
 CREATE SEQUENCE IF NOT EXISTS ring_seq           START WITH 1 INCREMENT BY 1;
 CREATE SEQUENCE IF NOT EXISTS magic_city_seq     START WITH 1 INCREMENT BY 1;
@@ -70,17 +57,6 @@ CREATE TABLE IF NOT EXISTS book_creature (
 );
 
 
--- =====================================================================
--- ЛР2. Пользователи, токены и история импорта.
---
--- ВАЖНО: ограничения уникальности предметной области (имя существа BookCreature.name)
--- в БД НЕ создаются - они проверяются только в бизнес-логике приложения
--- (InteractService / ImportService). Поэтому на book_creature(name) ниже стоит
--- обычный индекс (для быстрого поиска), а не UNIQUE.
--- Единственное UNIQUE в этом блоке - users_table.username: это не часть предметной области
--- (BookCreature / MagicCity / Ring), а служебная таблица аутентификации.
--- =====================================================================
-
 CREATE INDEX IF NOT EXISTS book_creature_name_idx ON book_creature (name);
 
 CREATE SEQUENCE IF NOT EXISTS users_seq            START WITH 1 INCREMENT BY 1;
@@ -106,9 +82,7 @@ CREATE INDEX IF NOT EXISTS token_access_idx  ON token_table (access_token);
 CREATE INDEX IF NOT EXISTS token_refresh_idx ON token_table (refresh_token);
 CREATE INDEX IF NOT EXISTS token_user_idx    ON token_table (user_id);
 
--- Одна запись = одна операция импорта (файл целиком импортируется одной транзакцией).
--- Запись создаётся в отдельной транзакции до начала импорта, поэтому остаётся в истории,
--- даже если сам импорт откатился (статус FAILED).
+
 CREATE TABLE IF NOT EXISTS import_operation (
     id            BIGINT       PRIMARY KEY DEFAULT nextval('import_operation_seq'),
     user_id       BIGINT       NOT NULL REFERENCES users_table (id),
@@ -119,7 +93,6 @@ CREATE TABLE IF NOT EXISTS import_operation (
     added_count   INTEGER,
     error_message TEXT,
     CONSTRAINT import_status_valid       CHECK (status IN ('IN_PROGRESS', 'SUCCESS', 'FAILED')),
-    -- число добавленных объектов хранится только у успешно завершённых операций
     CONSTRAINT import_added_only_success CHECK (added_count IS NULL OR status = 'SUCCESS')
 );
 CREATE INDEX IF NOT EXISTS import_operation_user_idx ON import_operation (user_id);

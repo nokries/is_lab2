@@ -38,8 +38,7 @@ public class JWTService {
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
-    // В токен кладётся уникальный jti: два токена одного пользователя, выданные в одну миллисекунду,
-    // всё равно получаются разными
+
     private String generateToken(User user, long expiryTime) {
         long now = System.currentTimeMillis();
         return Jwts.builder()
@@ -79,8 +78,6 @@ public class JWTService {
         return !extractClaim(token, Claims::getExpiration).before(new Date());
     }
 
-    // Access-токен действителен, если он есть в БД и не отозван (выход / повторный вход),
-    // принадлежит этому пользователю и не истёк
     public boolean isValid(String token, UserDetails user) {
         try {
             if (tokenRepository.findFirstByAccessTokenAndLoggedOutFalse(token).isEmpty()) {
@@ -89,12 +86,10 @@ public class JWTService {
             String username = extractUsername(token);
             return username.equals(user.getUsername()) && isNotExpired(token);
         } catch (Exception e) {
-            // Подпись не сошлась, токен повреждён и т.п.
             return false;
         }
     }
 
-    // То же для refresh-токена
     public boolean isValidRefresh(String token, User user) {
         String username = extractUsername(token);
         boolean known = tokenRepository.findFirstByRefreshTokenAndLoggedOutFalse(token).isPresent();

@@ -11,7 +11,6 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Validator;
 import org.example.is_lab1.config.YamlConfig;
-import org.example.is_lab1.exceptions.ConcurrencyConflictException;
 import org.example.is_lab1.exceptions.ImportValidationException;
 import org.example.is_lab1.exceptions.UniquenessViolationException;
 import org.example.is_lab1.models.dto.BookCreatureDTO;
@@ -41,25 +40,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-// Массовое добавление объектов из YAML-файла.
-//
-// Транзакционность ("всё или ничего"): весь файл обрабатывается ОДНОЙ транзакцией (importRecords).
-// Любая ошибка проверки данных, нарушение уникальности или сбой БД откатывает её целиком -
-// ни один объект из файла не создаётся. Запись в истории (ImportOperation) создаётся отдельной
-// транзакцией до импорта и фиксируется сразу, поэтому неудачная операция остаётся в истории со статусом FAILED.
-//
-// Уровень изоляции - SERIALIZABLE (см. SerializableTransaction): проверка уникальности имён - это
-// "прочитать, потом вставить", и два параллельных импорта с одинаковыми именами при более слабой
-// изоляции оба прошли бы проверку.
 @Service
 public class ImportService {
     private static final Logger log = LoggerFactory.getLogger(ImportService.class);
 
-    // Защита от слишком больших файлов: одна транзакция не должна держать БД слишком долго
     private static final int MAX_RECORDS = 5000;
-    // Сколько ошибок показываем пользователю (остальные считаем)
     private static final int MAX_ERRORS_SHOWN = 20;
-    // Размер пачки имён для проверки уникальности (SQL: name IN (...))
     private static final int NAMES_CHUNK = 500;
 
     private final InteractRepository creatureRepository;
@@ -68,7 +54,6 @@ public class ImportService {
     private final BookCreatureMapper mapper;
     private final MagicCityMapper cityMapper;
     private final Validator validator;
-    private final SerializableTransaction serializable;
     private final WebSocketNotificationService notificationService;
 
     public ImportService(InteractRepository creatureRepository,
@@ -77,7 +62,6 @@ public class ImportService {
                          BookCreatureMapper mapper,
                          MagicCityMapper cityMapper,
                          Validator validator,
-                         SerializableTransaction serializable,
                          WebSocketNotificationService notificationService) {
         this.creatureRepository = creatureRepository;
         this.operationRepository = operationRepository;
@@ -85,12 +69,10 @@ public class ImportService {
         this.mapper = mapper;
         this.cityMapper = cityMapper;
         this.validator = validator;
-        this.serializable = serializable;
         this.notificationService = notificationService;
     }
 
-    // Импорт файла от имени пользователя. При успехе возвращает запись истории (SUCCESS),
-    // при ошибке - записывает FAILED и пробрасывает исключение (его превращает в ответ ExceptionHandler)
+
     public ImportOperationDto importFromYaml(MultipartFile file, User user) {
         byte[] content;
         try {
@@ -102,7 +84,6 @@ public class ImportService {
         Long operationId = operations.start(user, file.getOriginalFilename());
         try {
             List<BookCreatureDTO> records = parse(content);
-            serializable.run(() -> importRecords(records, operationId));
         } catch (RuntimeException e) {
             log.warn("Импорт (операция {}) не выполнен: {}", operationId, e.getMessage());
             try {
@@ -115,7 +96,6 @@ public class ImportService {
         return operations.getOperation(operationId);
     }
 
-    // ---------------------------------------------------------------- разбор файла
 
     private List<BookCreatureDTO> parse(byte[] content) {
         ImportRequestDTO request;
@@ -137,7 +117,6 @@ public class ImportService {
         return request.creatures();
     }
 
-    // Человекочитаемое описание ошибки разбора YAML: номер записи, поле, строка файла
     private static String describeYamlError(JsonProcessingException e) {
         JsonLocation location = e.getLocation();
         String line = "";
@@ -149,7 +128,6 @@ public class ImportService {
             return "Некорректный формат YAML" + line;
         }
 
-        // Путь до проблемного поля: creatures[2].coordinates.x -> "Запись №3, поле 'coordinates.x'"
         Integer record = null;
         StringBuilder field = new StringBuilder();
         for (JsonMappingException.Reference ref : jme.getPath()) {
@@ -184,12 +162,8 @@ public class ImportService {
         return place + line + ": " + detail;
     }
 
-    // ---------------------------------------------------------------- импорт (одна транзакция)
 
-    // Выполняется внутри транзакции SERIALIZABLE (см. importFromYaml). Любое исключение откатывает всё.
     private void importRecords(List<BookCreatureDTO> records, Long operationId) {
-        // 1. Проверяем каждую запись по ограничениям предметной области и собираем сущности.
-        //    Ошибки копим, а не бросаем сразу, чтобы показать пользователю все проблемы файла за один раз.
         List<String> errors = new ArrayList<>();
         List<BookCreature> entities = new ArrayList<>();
         for (int i = 0; i < records.size(); i++) {
@@ -202,15 +176,14 @@ public class ImportService {
             throw new ImportValidationException(limit(errors));
         }
 
-        // 2. Ограничение уникальности (имя существа): и внутри файла, и среди уже существующих объектов
         List<String> duplicates = findDuplicateNames(records);
         if (!duplicates.isEmpty()) {
             throw new UniquenessViolationException(String.join("; ", limit(duplicates)));
         }
 
-        // 3. Сохраняем. Вложенные объекты (координаты, кольцо, город) создаются каскадом вместе с основным
+
         creatureRepository.saveAll(entities);
-        creatureRepository.flush(); // ошибки БД (CHECK и т.п.) проявляются здесь, а не при коммите
+        creatureRepository.flush();
 
         for (BookCreature creature : entities) {
             MagicCity city = creature.getCreatureLocation();
@@ -220,7 +193,6 @@ public class ImportService {
             notificationService.notifyCreated(WebSocketNotificationService.CREATURE, creature.getId(), mapper.toDto(creature));
         }
 
-        // 4. Отмечаем операцию успешной в той же транзакции: данные и статус фиксируются атомарно
         ImportOperation operation = operationRepository.findById(operationId)
                 .orElseThrow(() -> new EntityNotFoundException("Import operation not found with id " + operationId));
         operation.setStatus(ImportStatus.SUCCESS);
@@ -230,7 +202,6 @@ public class ImportService {
         operationRepository.save(operation);
     }
 
-    // Проверяет одну запись и превращает её в сущность. При ошибках добавляет их в errors и возвращает null.
     private BookCreature convertRecord(BookCreatureDTO dto, int number, List<String> errors) {
         if (dto == null) {
             errors.add("Запись №" + number + ": запись пуста");
@@ -239,12 +210,10 @@ public class ImportService {
 
         List<String> problems = new ArrayList<>();
 
-        // Ограничения самого существа и его координат (те же аннотации, что и при создании через форму)
         for (ConstraintViolation<BookCreatureDTO> v : validator.validate(dto)) {
             problems.add(v.getPropertyPath() + ": " + v.getMessage());
         }
 
-        // Вложенные объекты должны быть описаны полностью, в той же записи (ссылки по id не поддерживаются)
         MagicCityDTO city = dto.creatureLocation();
         RingDTO ring = dto.ring();
         boolean hasIdReference = false;
@@ -259,8 +228,6 @@ public class ImportService {
 
         BookCreature entity = null;
         if (!hasIdReference) {
-            // Маппер проверяет вложенные город и кольцо по ограничениям их сущностей
-            // и разбирает тип существа / губернатора (неизвестное значение - IllegalArgumentException)
             try {
                 entity = mapper.toEntity(dto);
             } catch (ConstraintViolationException e) {
@@ -283,7 +250,6 @@ public class ImportService {
         return entity;
     }
 
-    // К какому вложенному объекту относится нарушение (маппер проверяет город и кольцо отдельно от существа)
     private static String nestedPrefix(ConstraintViolation<?> v) {
         Class<?> root = v.getRootBeanClass();
         if (root == MagicCity.class) {
@@ -295,11 +261,11 @@ public class ImportService {
         return "";
     }
 
-    // Находит нарушения уникальности имени: повторы внутри файла и совпадения с объектами в БД
+
     private List<String> findDuplicateNames(List<BookCreatureDTO> records) {
         List<String> problems = new ArrayList<>();
 
-        // имя -> номера записей, в которых оно встречается
+
         Map<String, List<Integer>> positions = new LinkedHashMap<>();
         for (int i = 0; i < records.size(); i++) {
             positions.computeIfAbsent(records.get(i).name(), k -> new ArrayList<>()).add(i + 1);
@@ -343,10 +309,8 @@ public class ImportService {
         return shown;
     }
 
-    // Текст ошибки для истории
     private static String failureMessage(RuntimeException e) {
-        if (e instanceof ImportValidationException || e instanceof UniquenessViolationException
-                || e instanceof ConcurrencyConflictException) {
+        if (e instanceof ImportValidationException || e instanceof UniquenessViolationException) {
             return e.getMessage();
         }
         Throwable root = e;

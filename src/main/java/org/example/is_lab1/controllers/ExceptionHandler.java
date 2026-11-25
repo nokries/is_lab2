@@ -8,7 +8,6 @@ import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
-import org.example.is_lab1.exceptions.ConcurrencyConflictException;
 import org.example.is_lab1.exceptions.ImportValidationException;
 import org.example.is_lab1.exceptions.UniquenessViolationException;
 import org.example.is_lab1.models.dto.ErrorResponse;
@@ -94,7 +93,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // Передали {"id": N} несуществующего города/кольца - Spring превращает EntityNotFoundException в ObjectRetrievalFailureException
+
     @org.springframework.web.bind.annotation.ExceptionHandler(ObjectRetrievalFailureException.class)
     public ResponseEntity<ErrorResponse> handleRetrievalFailure(ObjectRetrievalFailureException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -107,7 +106,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
     }
 
-    // Нарушение ограничений Bean Validation, найденное при проверке сущности (новое кольцо / город / существо)
+
     @org.springframework.web.bind.annotation.ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex, HttpServletRequest request) {
         String details = "";
@@ -128,11 +127,10 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // Некорректный JSON / неверный тип значения в теле запроса (например, число не помещается в int/long)
+
     @org.springframework.web.bind.annotation.ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleNotReadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
         String details = "Некорректное тело запроса: проверьте формат и типы значений";
-        // Ищем в цепочке причин ошибку Jackson с путём до поля (ring.power, age и т.п.)
         Throwable t = ex.getCause();
         while (t != null && !(t instanceof JsonMappingException)) {
             t = t.getCause();
@@ -184,7 +182,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // Допустимый диапазон по имени поля (границы типов Java и ограничения задания)
+
     static String rangeHint(String field) {
         if (field == null) return null;
         if (field.equals("x")) {
@@ -208,7 +206,7 @@ public class ExceptionHandler {
         return null;
     }
 
-    // Параметр пути/запроса неверного типа или вне диапазона (например, "1231233123123" не помещается в int)
+
     @org.springframework.web.bind.annotation.ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -222,7 +220,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // Неизвестный тип существа и т.п.
+
     @org.springframework.web.bind.annotation.ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -235,7 +233,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // Ошибки БД, которые Spring не отнёс к DataIntegrityViolation (так бывает с EclipseLink), и ошибки коммита
+
     @org.springframework.web.bind.annotation.ExceptionHandler({DataAccessException.class, TransactionSystemException.class})
     public ResponseEntity<ErrorResponse> handleDatabase(Exception ex, HttpServletRequest request) {
         Throwable root = ex;
@@ -256,7 +254,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.CONFLICT);
     }
 
-    // ЛР2: нарушено ограничение уникальности предметной области (проверяется в бизнес-логике, не в БД)
+
     @org.springframework.web.bind.annotation.ExceptionHandler(UniquenessViolationException.class)
     public ResponseEntity<ErrorResponse> handleUniqueness(UniquenessViolationException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -269,20 +267,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.CONFLICT);
     }
 
-    // ЛР2: транзакция не выполнена из-за конфликта с параллельными транзакциями (после нескольких повторов)
-    @org.springframework.web.bind.annotation.ExceptionHandler(ConcurrencyConflictException.class)
-    public ResponseEntity<ErrorResponse> handleConcurrency(ConcurrencyConflictException ex, HttpServletRequest request) {
-        ErrorResponse error = new ErrorResponse(
-                HttpStatus.CONFLICT.value(),
-                "Конфликт параллельных изменений",
-                ex.getMessage(),
-                LocalDateTime.now(),
-                request.getRequestURI()
-        );
-        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
-    }
 
-    // ЛР2: файл импорта не прошёл проверку - ни один объект не создан
     @org.springframework.web.bind.annotation.ExceptionHandler(ImportValidationException.class)
     public ResponseEntity<ErrorResponse> handleImportValidation(ImportValidationException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -295,7 +280,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
-    // ЛР2: неверный логин или пароль
+
     @org.springframework.web.bind.annotation.ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ErrorResponse> handleAuthentication(AuthenticationException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -308,7 +293,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.UNAUTHORIZED);
     }
 
-    // ЛР2: файл импорта слишком большой
+
     @org.springframework.web.bind.annotation.ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -321,7 +306,7 @@ public class ExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.PAYLOAD_TOO_LARGE);
     }
 
-    // ЛР2: в запросе нет файла (или другого обязательного параметра)
+
     @org.springframework.web.bind.annotation.ExceptionHandler({MissingServletRequestPartException.class, MissingServletRequestParameterException.class})
     public ResponseEntity<ErrorResponse> handleMissingPart(Exception ex, HttpServletRequest request) {
         ErrorResponse error = new ErrorResponse(
@@ -333,6 +318,7 @@ public class ExceptionHandler {
         );
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
+
 
     @org.springframework.web.bind.annotation.ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAll(Exception ex, HttpServletRequest request) {

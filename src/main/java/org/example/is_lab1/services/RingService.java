@@ -13,6 +13,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -27,7 +28,6 @@ public class RingService {
     private final InteractRepository interactRepository;
     private final RingMapper mapper;
     private final WebSocketNotificationService notificationService;
-    private final SerializableTransaction serializable;
 
 
 
@@ -40,7 +40,7 @@ public class RingService {
     }
 
 
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public RingDTO create(RingDTO ring){
         Ring el = mapper.toEntity(ring);
         repository.save(el);
@@ -49,7 +49,7 @@ public class RingService {
         return created;
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public RingDTO modify(long id, RingDTO ring){
         Ring el = findRingOrThrow(id);
         mapper.updateEntityFromDto(ring, el);
@@ -59,22 +59,19 @@ public class RingService {
         return updated;
     }
 
-    // Удаление кольца: если у кольца есть владелец, удаляется владелец (а с ним и кольцо), иначе - само кольцо.
-    // Решение зависит от прочитанных данных, поэтому - транзакция SERIALIZABLE с автоповтором
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public void delete(long id){
-        serializable.run(() -> {
-            Ring ring = findRingOrThrow(id);
+        Ring ring = findRingOrThrow(id);
 
-            Optional<BookCreature> ownerBox = interactRepository.findByRing(ring);
-            if (ownerBox.isPresent()) {
-                BookCreature owner = ownerBox.get();
-                interactRepository.delete(owner);
-                notificationService.notifyDeleted(WebSocketNotificationService.CREATURE, owner.getId());
-            } else {
-                repository.delete(ring);
-            }
-            notificationService.notifyDeleted(WebSocketNotificationService.RING, id);
-        });
+        Optional<BookCreature> ownerBox = interactRepository.findByRing(ring);
+        if (ownerBox.isPresent()) {
+            BookCreature owner = ownerBox.get();
+            interactRepository.delete(owner);
+            notificationService.notifyDeleted(WebSocketNotificationService.CREATURE, owner.getId());
+        } else {
+            repository.delete(ring);
+        }
+        notificationService.notifyDeleted(WebSocketNotificationService.RING, id);
     }
 
     public Page<RingDTO> get(int page){

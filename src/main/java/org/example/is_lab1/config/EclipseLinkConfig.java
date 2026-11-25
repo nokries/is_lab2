@@ -24,7 +24,7 @@ public class EclipseLinkConfig {
     public LocalContainerEntityManagerFactoryBean entityManagerFactory(DataSource dataSource) {
         EclipseLinkJpaVendorAdapter vendorAdapter = new EclipseLinkJpaVendorAdapter();
         vendorAdapter.setDatabase(Database.POSTGRESQL);
-        vendorAdapter.setGenerateDdl(false);   // таблицы создаёт schema.sql, а не ORM
+        vendorAdapter.setGenerateDdl(false);
         vendorAdapter.setShowSql(true);
 
         Map<String, Object> props = new HashMap<>();

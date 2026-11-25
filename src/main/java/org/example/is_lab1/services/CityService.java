@@ -13,6 +13,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -26,10 +27,9 @@ public class CityService {
     private final InteractRepository interactRepository;
     private final MagicCityMapper mapper;
     private final WebSocketNotificationService notificationService;
-    private final SerializableTransaction serializable;
 
 
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public MagicCityDTO create(MagicCityDTO city){
         MagicCity el = mapper.toEntity(city);
         repository.save(el);
@@ -38,7 +38,7 @@ public class CityService {
         return created;
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public MagicCityDTO modify(long id, MagicCityDTO city){
         Optional<MagicCity> found = repository.findById(id);
         if (found.isEmpty()) {
@@ -52,26 +52,21 @@ public class CityService {
         return updated;
     }
 
-    // Удаление города вместе с его жителями: сначала читаем список жителей, потом удаляем.
-    // Житель, созданный параллельно между чтением и удалением, остался бы без города (или сорвал бы удаление),
-    // поэтому операция выполняется в транзакции SERIALIZABLE с автоповтором
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public void delete(long id){
-        serializable.run(() -> {
-            Optional<MagicCity> found = repository.findById(id);
-            if (found.isEmpty()) {
-                throw new EntityNotFoundException("City not found with id " + id);
-            }
-            MagicCity city = found.get();
+        Optional<MagicCity> found = repository.findById(id);
+        if (found.isEmpty()) {
+            throw new EntityNotFoundException("City not found with id " + id);
+        }
+        MagicCity city = found.get();
 
-            // Каскадное удаление: вместе с городом удаляются все существа, которые в нём живут
-            for (BookCreature resident : interactRepository.findByCreatureLocation(city)) {
-                interactRepository.delete(resident);
-                notificationService.notifyDeleted(WebSocketNotificationService.CREATURE, resident.getId());
-            }
+        for (BookCreature resident : interactRepository.findByCreatureLocation(city)) {
+            interactRepository.delete(resident);
+            notificationService.notifyDeleted(WebSocketNotificationService.CREATURE, resident.getId());
+        }
 
-            repository.delete(city);
-            notificationService.notifyDeleted(WebSocketNotificationService.CITY, id);
-        });
+        repository.delete(city);
+        notificationService.notifyDeleted(WebSocketNotificationService.CITY, id);
     }
 
     public Page<MagicCityDTO> get(int page){

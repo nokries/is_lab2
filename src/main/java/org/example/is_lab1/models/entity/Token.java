@@ -2,7 +2,6 @@ package org.example.is_lab1.models.entity;
 
 import jakarta.persistence.*;
 
-// Выданная пара JWT-токенов. Токен считается действующим, пока is_logged_out = false
 @Entity
 @Table(name = "token_table")
 public class Token {

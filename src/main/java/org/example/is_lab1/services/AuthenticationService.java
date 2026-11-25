@@ -40,8 +40,7 @@ public class AuthenticationService {
         this.tokenRepository = tokenRepository;
     }
 
-    // Регистрация нового пользователя. Если роль не указана, это USER.
-    // Одна транзакция: пользователь и его токен сохраняются вместе.
+
     @Transactional
     public AuthenticationResponseDto register(RegistrationRequestDto request) {
         if (userRepository.findByUsername(request.username()).isPresent()) {
@@ -57,12 +56,9 @@ public class AuthenticationService {
         return issueTokens(user);
     }
 
-    // Вход. Строка пользователя блокируется (FOR UPDATE) до конца транзакции:
-    // два одновременных входа одного пользователя выполняются по очереди и не перемешивают выдачу и отзыв токенов.
-    // Порядок важен: сначала отзываем старые токены, потом сохраняем новый.
+
     @Transactional
     public AuthenticationResponseDto authenticate(RegistrationRequestDto request) {
-        // Проверка логина и пароля средствами Spring Security (при ошибке - AuthenticationException)
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password()));
 

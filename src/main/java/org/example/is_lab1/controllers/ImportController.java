@@ -21,7 +21,6 @@ public class ImportController {
         this.operationService = operationService;
     }
 
-    // Загрузка YAML-файла и массовое добавление объектов (всё или ничего)
     @PostMapping("/upload")
     public ResponseEntity<ImportOperationDto> upload(@RequestParam("file") MultipartFile file,
                                                      @AuthenticationPrincipal User user) {
@@ -35,7 +34,6 @@ public class ImportController {
         return ResponseEntity.ok(importService.importFromYaml(file, user));
     }
 
-    // История импорта: обычный пользователь видит свои операции, администратор - все
     @GetMapping("/history")
     public ResponseEntity<Page<ImportOperationDto>> history(@RequestParam(defaultValue = "0") int page,
                                                             @AuthenticationPrincipal User user) {

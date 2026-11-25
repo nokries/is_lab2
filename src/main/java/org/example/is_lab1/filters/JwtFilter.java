@@ -16,7 +16,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
-// Читает заголовок "Authorization: Bearer <токен>" и, если токен действителен, считает пользователя вошедшим
 public class JwtFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(JwtFilter.class);
 
@@ -56,8 +55,6 @@ public class JwtFilter extends OncePerRequestFilter {
                 }
             }
         } catch (Exception e) {
-            // Токен повреждён или истёк: пропускаем запрос без аутентификации,
-            // SecurityConfig ответит 401, если для адреса нужен вход
             log.warn("JwtFilter: ошибка проверки токена: {}", e.getMessage());
         }
 

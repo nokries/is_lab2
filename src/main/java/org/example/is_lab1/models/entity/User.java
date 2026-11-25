@@ -8,7 +8,6 @@ import org.springframework.security.core.userdetails.UserDetails;
 import java.util.Collection;
 import java.util.List;
 
-// Пользователь системы. Реализует UserDetails, чтобы Spring Security мог работать с ним напрямую
 @Entity
 @Table(name = "users_table")
 public class User implements UserDetails {

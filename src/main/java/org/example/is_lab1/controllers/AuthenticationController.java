@@ -12,8 +12,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// Эндпоинты входа лежат под /api/auth, чтобы проксирование /api (nginx, vite) продолжало работать без изменений.
-// Выход (logout) обрабатывает Spring Security: POST /api/auth/logout (см. SecurityConfig)
 @RestController
 @RequestMapping("/api/auth")
 public class AuthenticationController {
@@ -24,7 +22,6 @@ public class AuthenticationController {
         this.authenticationService = authenticationService;
     }
 
-    // Пользователь с таким именем уже есть - UniquenessViolationException, ExceptionHandler отвечает кодом 409
     @PostMapping("/registration")
     public ResponseEntity<AuthenticationResponseDto> register(@Valid @RequestBody RegistrationRequestDto request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(authenticationService.register(request));

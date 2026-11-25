@@ -1,5 +1,4 @@
 <template>
-  <!-- Окно подтверждения: тёмная подложка на весь экран и белая карточка по центру (в стиле остальных окон) -->
   <Transition name="confirm">
     <div
         v-if="state.visible"
@@ -15,7 +14,6 @@
           class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 outline-none"
       >
         <div class="flex items-start gap-4">
-          <!-- Иконка: красная для опасных действий (удаление), иначе жёлтая -->
           <div
               :class="[
               'flex-shrink-0 flex items-center justify-center h-10 w-10 rounded-full',
@@ -60,7 +58,6 @@ import { useConfirmState } from '../composables/useConfirm.js'
 const { state, accept, cancel } = useConfirmState()
 const dialogRef = ref(null)
 
-// Когда окно открылось, переводим на него фокус, чтобы работала клавиша Esc
 watch(() => state.value.visible, async (visible) => {
   if (visible) {
     await nextTick()

@@ -8,6 +8,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface ImportOperationRepository extends JpaRepository<ImportOperation, Long> {
-    // Операции одного пользователя (для обычного пользователя). Администратор использует findAll
     Page<ImportOperation> findByUserId(Long userId, Pageable pageable);
 }

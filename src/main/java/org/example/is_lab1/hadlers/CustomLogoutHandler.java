@@ -7,7 +7,6 @@ import org.example.is_lab1.repository.TokenRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.logout.LogoutHandler;
 
-// При выходе помечает токен отозванным
 public class CustomLogoutHandler implements LogoutHandler {
     private final TokenRepository tokenRepository;
 
@@ -25,7 +24,7 @@ public class CustomLogoutHandler implements LogoutHandler {
 
         String token = authHeader.substring(7);
 
-        // Уже отозванный токен не найдётся - это нормально
+
         Token tokenEntity = tokenRepository.findFirstByAccessTokenAndLoggedOutFalse(token).orElse(null);
 
         if (tokenEntity != null) {

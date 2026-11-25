@@ -1,8 +1,5 @@
-// Своё окно подтверждения вместо стандартного confirm() браузера.
-// Использование:  if (!(await confirmAction({ message: '...' }))) return
 import { ref } from 'vue'
 
-// Состояние окна общее для всего приложения: само окно (ConfirmDialog.vue) показывается один раз в App.vue
 const state = ref({
   visible: false,
   title: '',
@@ -14,9 +11,7 @@ const state = ref({
 
 let resolver = null
 
-// Открывает окно и возвращает Promise: true - нажали «подтвердить», false - «отмена» / закрыли окно
 export function confirmAction({ title = 'Подтвердите действие', message = '', confirmText = 'Подтвердить', cancelText = 'Отмена', danger = false } = {}) {
-  // Если окно уже открыто, предыдущий вопрос считаем отменённым
   if (resolver) {
     resolver(false)
   }
@@ -34,7 +29,6 @@ function close(result) {
   }
 }
 
-// Для компонента ConfirmDialog
 export function useConfirmState() {
   return {
     state,

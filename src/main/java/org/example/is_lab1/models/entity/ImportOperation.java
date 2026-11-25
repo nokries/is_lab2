@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
 
-// Запись истории импорта: одна загрузка файла = одна операция
 @Entity
 @Table(name = "import_operation")
 public class ImportOperation {
@@ -13,7 +12,6 @@ public class ImportOperation {
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "import_operation_gen")
     private Long id;
 
-    // Пользователь, который запустил операцию
     @ManyToOne(optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
@@ -31,7 +29,6 @@ public class ImportOperation {
     @Column(name = "end_time")
     private LocalDateTime endTime;
 
-    // Сколько объектов добавлено. Заполняется только у успешно завершённых операций
     @Column(name = "added_count")
     private Integer addedCount;
 

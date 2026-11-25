@@ -71,23 +71,18 @@ public class SecurityConfig {
 
         http.csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                // SockJS при запасном транспорте открывает страницу во фрейме того же сайта
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()));
 
         http.authorizeHttpRequests(auth -> {
                     auth.requestMatchers(
-                            // вход, регистрация, обновление токена
                             "/api/auth/**",
-                            // WebSocket-уведомления
                             "/ws/**",
-                            // собранный фронтенд (страница входа показывается до авторизации)
                             "/",
                             "/index.html",
                             "/assets/**",
                             "/favicon.ico"
                     ).permitAll();
                     auth.requestMatchers("/admin/**").hasAuthority("ADMIN");
-                    // все остальные запросы (/api/...) - только для вошедших пользователей
                     auth.anyRequest().authenticated();
                 })
                 .userDetailsService(userService)

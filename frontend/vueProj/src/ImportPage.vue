@@ -5,24 +5,17 @@ import { api } from './api.js'
 import { useAuth } from './composables/useAuth.js'
 import { showApiError, showApiSuccess } from './utils/errorHandler.js'
 
-// Администратор видит в истории все операции, обычный пользователь - только свои
 const { isAdmin } = useAuth()
 
-// Скрытое поле выбора файла (открывается по кнопке) и выбранный файл
 const fileInput = ref(null)
 const selectedFile = ref(null)
-// Подсветка рамки, пока файл тянут над ней мышью
 const isDragging = ref(false)
-// Идёт ли сейчас загрузка и импорт
 const uploading = ref(false)
-
-// История импорта
 const history = ref([])
 const loadingHistory = ref(false)
 const currentPage = ref(1)
 const totalPages = ref(0)
 
-// Принимаем только файлы .yaml / .yml
 function isYaml(file) {
   const name = file.name.toLowerCase()
   return name.endsWith('.yaml') || name.endsWith('.yml')
@@ -37,14 +30,11 @@ function selectFile(file) {
   selectedFile.value = file
 }
 
-// Файл выбран через окно выбора
 function handleFileSelect(event) {
   selectFile(event.target.files[0])
-  // Сбрасываем поле, чтобы можно было выбрать тот же файл ещё раз
   event.target.value = ''
 }
 
-// Файл перетащили на рамку
 function handleDrop(event) {
   isDragging.value = false
   selectFile(event.dataTransfer.files[0])
@@ -60,8 +50,6 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' МБ'
 }
 
-// Отправка файла на сервер. Сервер импортирует файл одной транзакцией:
-// при любой ошибке не создаётся ни один объект
 async function uploadFile() {
   if (!selectedFile.value) return
 
@@ -74,15 +62,11 @@ async function uploadFile() {
     showApiError({ title: error.title || 'Ошибка импорта', message: error.message })
   } finally {
     uploading.value = false
-    // Неудачная операция тоже попадает в историю, поэтому обновляем её в любом случае
     currentPage.value = 1
     await loadHistory(true)
   }
 }
 
-// Кеш страниц истории: номер страницы -> данные. Листание туда-обратно не ходит на сервер.
-// Кеш сбрасывается после своего импорта и по кнопке «Обновить» (история меняется, в том числе
-// из-за операций других пользователей, о которых страница сама не узнаёт)
 const historyCache = new Map()
 
 async function loadHistory(force = false) {
@@ -118,7 +102,6 @@ function changePage(page) {
   loadHistory()
 }
 
-// Цвет и текст статуса операции
 function statusClass(status) {
   switch (status) {
     case 'SUCCESS': return 'bg-green-100 text-green-800'
@@ -156,8 +139,6 @@ onMounted(() => {
 <template>
   <div class="bg-gray-50 p-6">
     <div class="max-w-6xl mx-auto space-y-6">
-
-      <!-- Загрузка файла -->
       <div class="bg-white rounded-lg shadow-sm p-6">
         <h2 class="text-2xl font-bold text-gray-900 mb-1">Импорт объектов из YAML-файла</h2>
         <p class="text-sm text-gray-500 mb-4">
@@ -191,7 +172,6 @@ onMounted(() => {
           <p class="text-gray-400 text-sm">Один файл формата .yaml или .yml</p>
         </div>
 
-        <!-- Выбранный файл -->
         <div v-if="selectedFile" class="mt-4 flex items-center justify-between p-3 bg-gray-50 rounded-lg">
           <div class="flex items-center gap-3">
             <FileText class="h-5 w-5 text-gray-500" />
@@ -215,7 +195,6 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- История импорта -->
       <div class="bg-white rounded-lg shadow-sm p-6">
         <div class="flex justify-between items-center mb-1">
           <h2 class="text-2xl font-bold text-gray-900">История импорта</h2>
@@ -260,7 +239,6 @@ onMounted(() => {
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-600">{{ item.username }}</td>
                 <td class="px-4 py-3 text-sm text-gray-600">{{ item.fileName || '-' }}</td>
-                <!-- Число добавленных объектов показываем только у успешных операций -->
                 <td class="px-4 py-3 text-sm text-gray-600">
                   {{ item.status === 'SUCCESS' ? item.addedCount : '-' }}
                 </td>
@@ -274,7 +252,6 @@ onMounted(() => {
           </table>
         </div>
 
-        <!-- Страницы -->
         <div v-if="totalPages > 1" class="mt-4 flex justify-center items-center gap-2">
           <button
               @click="changePage(currentPage - 1)"

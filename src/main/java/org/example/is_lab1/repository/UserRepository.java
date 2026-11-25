@@ -14,8 +14,6 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByUsername(String username);
 
-    // Пользователь с блокировкой строки (SELECT ... FOR UPDATE).
-    // Нужна, чтобы два одновременных входа одного пользователя не перемешали выдачу и отзыв токенов.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM User u WHERE u.username = :username")
     Optional<User> findByUsernameWithLock(@Param("username") String username);

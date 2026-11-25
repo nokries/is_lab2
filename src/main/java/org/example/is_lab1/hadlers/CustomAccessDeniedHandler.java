@@ -8,7 +8,6 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 
 import java.io.IOException;
 
-// Недостаточно прав (например, обычный пользователь открыл адрес администратора) - ответ 403
 public class CustomAccessDeniedHandler implements AccessDeniedHandler {
 
     @Override

@@ -19,36 +19,28 @@ import java.util.Optional;
 public interface InteractRepository extends JpaRepository<BookCreature, Long> {
     boolean existsByCreatureLocation(MagicCity city);
 
-    // Фильтрация таблицы: только полное совпадение (без Containing / IgnoreCase)
+
     Page<BookCreature> findByName(String name, Pageable pageable);
-
     Page<BookCreature> findByCreatureType(BookCreatureType type, Pageable pageable);
-
     Page<BookCreature> findByCreatureLocationName(String cityName, Pageable pageable);
-
     Page<BookCreature> findByRingName(String ringName, Pageable pageable);
 
-    // Для каскадного удаления
-    List<BookCreature> findByCreatureLocation(MagicCity city);
 
+    List<BookCreature> findByCreatureLocation(MagicCity city);
     Optional<BookCreature> findByRing(Ring ring);
 
-    // Специальные операции
+
     Optional<BookCreature> findFirstByOrderByCoordinatesXAscCoordinatesYAsc();
-
     List<BookCreature> findByNameContaining(String substring);
-
     List<BookCreature> findByRingPowerLessThan(Integer power);
-
     List<BookCreature> findByCreatureType(BookCreatureType type);
 
-    // ЛР2: проверка уникальности имени существа (ограничение реализовано в бизнес-логике, а не в БД)
+
     boolean existsByName(String name);
 
-    // То же, но с исключением самого редактируемого объекта (при изменении имени)
     boolean existsByNameAndIdNot(String name, Long id);
 
-    // Какие из перечисленных имён уже заняты (для импорта: одним запросом на пачку имён)
+
     @Query("SELECT b.name FROM BookCreature b WHERE b.name IN :names")
     List<String> findExistingNames(@Param("names") Collection<String> names);
 

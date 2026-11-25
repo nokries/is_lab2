@@ -2,12 +2,8 @@
 import { ref, reactive } from 'vue'
 import { useAuth } from './composables/useAuth.js'
 
-// После успешного входа сообщаем родителю (App.vue), чтобы он показал основное приложение
 const emit = defineEmits(['authenticated'])
-
 const { login, register } = useAuth()
-
-// Что показываем: вход (true) или регистрацию (false)
 const isLogin = ref(true)
 const loading = ref(false)
 const error = ref('')
@@ -18,7 +14,6 @@ const form = reactive({
   role: 'USER'
 })
 
-// Переключение между входом и регистрацией
 function toggleMode() {
   isLogin.value = !isLogin.value
   error.value = ''
@@ -82,7 +77,6 @@ async function handleSubmit() {
           />
         </div>
 
-        <!-- Роль выбирается только при регистрации -->
         <div v-if="!isLogin">
           <label for="role" class="block text-sm font-medium text-gray-700 mb-1">
             Роль

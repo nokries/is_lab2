@@ -17,8 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
-// Работа с историей импорта. Каждый метод выполняется в своей короткой транзакции и фиксируется сразу,
-// поэтому запись об операции остаётся в истории, даже если сам импорт (отдельная транзакция) откатился.
+
 @Service
 public class ImportOperationService {
     private static final int PAGE_SIZE = 10;
@@ -32,7 +31,7 @@ public class ImportOperationService {
         this.userRepository = userRepository;
     }
 
-    // Создать запись об операции со статусом IN_PROGRESS
+
     @Transactional
     public Long start(User user, String fileName) {
         User owner = userRepository.findById(user.getId())
@@ -47,7 +46,6 @@ public class ImportOperationService {
         return operation.getId();
     }
 
-    // Отметить операцию как неудачную. Операцию, которая уже успешно завершилась, не трогаем
     @Transactional
     public void markFailed(Long operationId, String message) {
         ImportOperation operation = repository.findById(operationId).orElse(null);
@@ -61,7 +59,7 @@ public class ImportOperationService {
         repository.save(operation);
     }
 
-    // История: обычный пользователь видит только свои операции, администратор - все
+
     @Transactional(readOnly = true)
     public Page<ImportOperationDto> getHistory(User user, int page) {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
