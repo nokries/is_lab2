@@ -1,0 +1,54 @@
+# Корректный файл импорта: 3 существа. Вложенные объекты (координаты, город, кольцо)
+# описываются целиком в той же записи, что и основной объект.
+# Имена существ должны быть уникальными: повторный импорт этого же файла завершится ошибкой.
+creatures:
+  - name: "Frodo Baggins"
+    coordinates:
+      x: 100
+      y: 200
+    age: 50
+    creatureType: HOBBIT
+    attackLevel: 8
+    creatureLocation:
+      name: "Shire"
+      area: 5000.5
+      population: 1000
+      governor: HOBBIT
+      capital: true
+      populationDensity: 200
+    ring:
+      name: "One Ring"
+      power: 1000
+      weight: 5
+
+  - name: "Samwise Gamgee"
+    coordinates:
+      x: 105
+      y: 195
+    age: 38
+    creatureType: HOBBIT
+    attackLevel: 10
+    creatureLocation:
+      name: "Shire"
+      area: 5000.5
+      population: 1000
+      governor: HOBBIT
+      capital: true
+      populationDensity: 200
+    ring:
+      name: "Sam's Ring"
+      power: 10
+      weight: 1
+
+  - name: "Gollum"
+    coordinates:
+      x: -50
+      y: 12
+    age: 589
+    creatureType: GOLLUM
+    attackLevel: 15
+    # creatureLocation необязательно: существо может нигде не жить
+    ring:
+      name: "Lost Ring"
+      power: 900
+      weight: 5

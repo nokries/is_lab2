@@ -1,0 +1,138 @@
+@startuml
+top to bottom direction
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+package "controllers" {
+    class AuthenticationController {
+        +register(request)
+        +authenticate(request)
+        +refreshToken(request)
+    }
+
+    class ImportController {
+        +upload(file, user)
+        +history(page, user)
+    }
+
+    class InteractController {
+        +create(creature)
+        +modify(id, creature)
+        +delete(id)
+    }
+
+    class ExceptionHandler {
+        +handleImportValidation(...)
+        +handleUniqueness(...)
+        +handleConcurrency(...)
+    }
+}
+
+package "services" {
+    class AuthenticationService {
+        +register(request)
+        +authenticate(request)
+        +refreshToken(request)
+        -issueTokens(user)
+    }
+
+    class JWTService {
+        +generateAccessToken(user)
+        +generateRefreshToken(user)
+        +extractUsername(token)
+        +isValid(token, user)
+    }
+
+    class UserService {
+        +loadUserByUsername(username)
+    }
+
+    class ImportService {
+        +importFromYaml(file, user)
+        -parse(content)
+        -importRecords(records, operationId)
+    }
+
+    class ImportOperationService {
+        +start(user, fileName)
+        +markFailed(operationId, message)
+        +getHistory(user, page)
+        +getOperation(id)
+    }
+
+    class InteractService {
+        +create(creature)
+        +modify(id, creature)
+        +delete(id)
+        -checkNameIsFree(name, ownId)
+    }
+
+    class SerializableTransaction {
+        +execute(action)
+        +run(action)
+    }
+}
+
+package "repository" {
+    interface UserRepository
+    interface TokenRepository
+    interface ImportOperationRepository
+    interface InteractRepository
+}
+
+package "config" {
+    class SecurityConfig
+    class YamlConfig
+}
+
+package "filters" {
+    class JwtFilter
+}
+
+package "models.dto" {
+    class AuthenticationResponseDto <<record>>
+    class ImportRequestDTO <<record>>
+    class ImportOperationDto <<record>>
+}
+
+package "models.entity" {
+    class User
+    class Token
+    class ImportOperation
+    class BookCreature
+}
+
+AuthenticationController --> AuthenticationService
+AuthenticationService --> JWTService
+AuthenticationService --> UserRepository
+AuthenticationService --> TokenRepository
+AuthenticationService ..> AuthenticationResponseDto : формирует ответ
+
+SecurityConfig ..> JwtFilter : подключает
+JwtFilter --> JWTService : проверяет токен
+JwtFilter --> UserService : загружает пользователя
+UserService --> UserRepository
+JWTService --> TokenRepository
+
+ImportController --> ImportService : загрузка файла
+ImportController --> ImportOperationService : история
+ImportService --> ImportOperationService : начало и ошибка
+ImportService --> ImportOperationRepository : сохраняет успех
+ImportService --> InteractRepository : проверяет и сохраняет
+ImportService --> SerializableTransaction
+ImportService ..> YamlConfig : читает YAML
+ImportService ..> ImportRequestDTO : разбирает файл
+ImportOperationService --> ImportOperationRepository
+ImportOperationService ..> ImportOperationDto : формирует ответ
+
+InteractController --> InteractService
+InteractService --> InteractRepository
+InteractService --> SerializableTransaction
+
+UserRepository ..> User
+TokenRepository ..> Token
+ImportOperationRepository ..> ImportOperation
+InteractRepository ..> BookCreature
+
+@enduml

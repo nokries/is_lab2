@@ -1,0 +1,11 @@
+# Ограничение уникальности: два существа с одним именем в одном файле -> ошибка, ничего не создаётся
+creatures:
+  - name: "Twin"
+    coordinates: { x: 1, y: 1 }
+    attackLevel: 5
+    ring: { name: "T1", power: 1, weight: 1 }
+
+  - name: "Twin"
+    coordinates: { x: 2, y: 2 }
+    attackLevel: 6
+    ring: { name: "T2", power: 1, weight: 1 }

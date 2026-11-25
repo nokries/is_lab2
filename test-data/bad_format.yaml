@@ -1,0 +1,11 @@
+# Неверный формат: неизвестное поле и текст вместо числа
+creatures:
+  - name: "Typo"
+    coordinates: { x: abc, y: 1 }
+    attackLevel: 5
+    ring: { name: "B1", power: 1, weight: 1 }
+
+  - name: "Typo 2"
+    coordinates: { x: 1, y: 1 }
+    attackLevl: 5
+    ring: { name: "B2", power: 1, weight: 1 }

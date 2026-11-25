@@ -1,0 +1,25 @@
+# Файл с ошибкой в ТРЕТЬЕЙ записи. Первые две записи сами по себе корректны,
+# но импорт выполняется одной транзакцией, поэтому не будет создан НИ ОДИН объект
+# (проверьте, что "Rollback Test 1" и "Rollback Test 2" в таблице не появились).
+creatures:
+  - name: "Rollback Test 1"
+    coordinates: { x: 1, y: 1 }
+    attackLevel: 5
+    ring: { name: "R1", power: 1, weight: 1 }
+
+  - name: "Rollback Test 2"
+    coordinates: { x: 2, y: 2 }
+    attackLevel: 5
+    ring: { name: "R2", power: 1, weight: 1 }
+
+  - name: "Rollback Test 3"
+    coordinates: { x: 800, y: 3 }      # ошибка: x не может быть больше 735
+    age: -4                            # ошибка: возраст должен быть больше 0
+    attackLevel: 5
+    creatureLocation:
+      name: "Bad City"
+      area: -10                        # ошибка: площадь должна быть больше 0
+      population: 10
+      capital: false
+      populationDensity: 1
+    ring: { name: "R3", power: 0, weight: 1 }   # ошибка: сила кольца должна быть больше 0

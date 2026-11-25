@@ -1,0 +1,101 @@
+@startuml
+top to bottom direction
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+package "models.entity" {
+
+    class BookCreature <<Entity>> {
+        - id : Long
+        - name : String
+        - coordinates : Coordinates
+        - creationDate : Date
+        - age : Long
+        - creatureType : BookCreatureType
+        - creatureLocation : MagicCity
+        - attackLevel : long
+        - ring : Ring
+    }
+
+    class Coordinates <<Entity>> {
+        - id : Long
+        - x : int
+        - y : int
+    }
+
+    class MagicCity <<Entity>> {
+        - id : Long
+        - name : String
+        - area : Double
+        - population : Integer
+        - establishmentDate : ZonedDateTime
+        - governor : BookCreatureType
+        - capital : boolean
+        - populationDensity : long
+    }
+
+    class Ring <<Entity>> {
+        - id : Long
+        - name : String
+        - power : Integer
+        - weight : Integer
+    }
+
+    enum BookCreatureType {
+        HOBBIT
+        ELF
+        HUMAN
+        GOLLUM
+    }
+
+    class User <<Entity>> {
+        - id : Long
+        - username : String
+        - password : String
+        - role : Role
+    }
+
+    class Token <<Entity>> {
+        - id : Long
+        - accessToken : String
+        - refreshToken : String
+        - loggedOut : boolean
+        - user : User
+    }
+
+    class ImportOperation <<Entity>> {
+        - id : Long
+        - user : User
+        - status : ImportStatus
+        - fileName : String
+        - startTime : LocalDateTime
+        - endTime : LocalDateTime
+        - addedCount : Integer
+        - errorMessage : String
+    }
+
+    enum Role {
+        USER
+        ADMIN
+    }
+
+    enum ImportStatus {
+        IN_PROGRESS
+        SUCCESS
+        FAILED
+    }
+}
+
+BookCreature "1" *-- "1" Coordinates : coordinates
+BookCreature "0..*" --> "0..1" MagicCity : creatureLocation
+BookCreature "0..1" --> "1" Ring : ring
+BookCreature ..> BookCreatureType : creatureType
+MagicCity ..> BookCreatureType : governor
+
+Token "0..*" --> "1" User : владелец пары
+ImportOperation "0..*" --> "1" User : запустил импорт
+User ..> Role : role
+ImportOperation ..> ImportStatus : status
+
+@enduml

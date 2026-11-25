@@ -1,0 +1,11 @@
+# Ограничение уникальности: имя "Frodo Baggins" уже занято (после импорта valid_1.yaml) -> ошибка
+creatures:
+  - name: "New Creature"
+    coordinates: { x: 1, y: 1 }
+    attackLevel: 5
+    ring: { name: "N1", power: 1, weight: 1 }
+
+  - name: "Frodo Baggins"
+    coordinates: { x: 2, y: 2 }
+    attackLevel: 6
+    ring: { name: "N2", power: 1, weight: 1 }

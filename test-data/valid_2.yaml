@@ -1,0 +1,31 @@
+# Второй корректный файл: тип существа и город не указаны (оба поля необязательные)
+creatures:
+  - name: "Legolas"
+    coordinates:
+      x: 10
+      y: 20
+    age: 2931
+    creatureType: ELF
+    attackLevel: 30
+    creatureLocation:
+      name: "Mirkwood"
+      area: 12000
+      population: 3000
+      governor: ELF
+      capital: false
+      populationDensity: 250
+      establishmentDate: "2020-05-17T10:15:30+03:00"
+    ring:
+      name: "Vilya"
+      power: 700
+      weight: 1
+
+  - name: "Aragorn"
+    coordinates:
+      x: 735
+      y: -5
+    attackLevel: 40
+    ring:
+      name: "Barahir"
+      power: 50
+      weight: 1

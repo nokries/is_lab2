@@ -1,0 +1,2862 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="IS Lab2 - параллельная работа пользователей" enabled="true">
+      <stringProp name="TestPlan.comments">Проверка изоляции транзакций и ограничений уникальности при одновременной работе нескольких пользователей. Параметры: -JHOST=localhost -JPORT=8080 -JTHREADS=10</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+      <stringProp name="TestPlan.user_define_classpath"></stringProp>
+    </TestPlan>
+    <hashTree>
+      <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="setUp: подготовка (пользователи, файлы, целевые объекты)">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </SetupThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Инициализация прогона" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Уникальный идентификатор прогона: имена объектов не пересекаются с прошлыми запусками
+// Каждый запуск получает новый RUN_ID: JMeter в GUI хранит свойства между запусками,
+// а при старом RUN_ID регистрация пользователей дала бы &quot;уже существует&quot;
+props.setProperty(&quot;RUN_ID&quot;, String.valueOf(System.currentTimeMillis()))
+// Количество потоков (по умолчанию 10; задаётся ключом -JTHREADS=N)
+if (props.getProperty(&quot;THREADS&quot;) == null) {
+    props.setProperty(&quot;THREADS&quot;, &quot;10&quot;)
+}
+// Сбрасываем счётчики результатов прошлого запуска (если JMeter запущен в GUI повторно)
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_&quot;) }.each { props.remove(it) }
+String run = props.getProperty(&quot;RUN_ID&quot;)
+vars.put(&quot;RUN&quot;, run)
+
+// Файлы для импорта создаются на лету, чтобы имена объектов были уникальными для каждого прогона
+File dir = new File(System.getProperty(&quot;java.io.tmpdir&quot;), &quot;is_lab2_import_&quot; + run)
+dir.mkdirs()
+def record = { String name, String extra = &quot;&quot; -&gt;
+    return &quot;&quot;&quot;  - name: &quot;${name}&quot;
+    coordinates: { x: 10, y: 20 }
+    age: 30
+    creatureType: HOBBIT
+    attackLevel: 7
+    creatureLocation: { name: &quot;City ${name}&quot;, area: 100.5, population: 100, governor: HUMAN, capital: false, populationDensity: 5 }
+    ring: { name: &quot;Ring ${name}&quot;, power: 3, weight: 1${extra} }
+&quot;&quot;&quot;
+}
+// 1) корректный файл из трёх записей: его импортируют все потоки одновременно (должен пройти ровно один раз)
+new File(dir, &quot;valid.yaml&quot;).setText(&quot;creatures:\n&quot; + record(&quot;IMP_&quot; + run + &quot;_1&quot;) + record(&quot;IMP_&quot; + run + &quot;_2&quot;) + record(&quot;IMP_&quot; + run + &quot;_3&quot;), &quot;UTF-8&quot;)
+// 2) файл, где первая запись корректна, а вторая нарушает ограничение (x &gt; 735): не должно создаться ничего
+String bad = record(&quot;IMPBAD_&quot; + run + &quot;_1&quot;) + record(&quot;IMPBAD_&quot; + run + &quot;_2&quot;).replace(&quot;x: 10,&quot;, &quot;x: 9999,&quot;)
+new File(dir, &quot;invalid.yaml&quot;).setText(&quot;creatures:\n&quot; + bad, &quot;UTF-8&quot;)
+// 3) файл из одной записи с именем, за которое соревнуются импорт и обычное создание
+new File(dir, &quot;mix.yaml&quot;).setText(&quot;creatures:\n&quot; + record(&quot;MIX_&quot; + run), &quot;UTF-8&quot;)
+// 4) файл для проверки истории импорта
+new File(dir, &quot;history.yaml&quot;).setText(&quot;creatures:\n&quot; + record(&quot;HIST_&quot; + run + &quot;_1&quot;), &quot;UTF-8&quot;)
+props.setProperty(&quot;IMPORT_DIR&quot;, dir.getAbsolutePath())
+log.info(&quot;IS Lab2: RUN_ID=&quot; + run + &quot;, THREADS=&quot; + props.getProperty(&quot;THREADS&quot;) + &quot;, files: &quot; + dir.getAbsolutePath())
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Регистрация администраторов (по одному на поток)" enabled="true">
+          <stringProp name="LoopController.loops">${__P(THREADS,10)}</stringProp>
+        </LoopController>
+        <hashTree>
+          <CounterConfig guiclass="CounterConfigGui" testclass="CounterConfig" testname="Номер пользователя" enabled="true">
+            <stringProp name="CounterConfig.start">1</stringProp>
+            <stringProp name="CounterConfig.end"></stringProp>
+            <stringProp name="CounterConfig.incr">1</stringProp>
+            <stringProp name="CounterConfig.name">userNum</stringProp>
+            <stringProp name="CounterConfig.format"></stringProp>
+            <boolProp name="CounterConfig.per_user">false</boolProp>
+          </CounterConfig>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Register admin ${userNum}" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/registration</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${userNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;,&quot;role&quot;:&quot;ADMIN&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 201" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Допустимые коды ответа: 201. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;201&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Register plain USER" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/auth/registration</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmplain_${__P(RUN_ID)}&quot;,&quot;password&quot;:&quot;pass12345&quot;,&quot;role&quot;:&quot;USER&quot;}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 201" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 201. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;201&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Register setup admin" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/auth/registration</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmsetup_${__P(RUN_ID)}&quot;,&quot;password&quot;:&quot;pass12345&quot;,&quot;role&quot;:&quot;ADMIN&quot;}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">setupToken</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 201" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 201. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;201&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Сохранить токен setup-администратора" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">props.setProperty(&quot;SETUP_TOKEN&quot;, vars.get(&quot;setupToken&quot;))</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create target for UPDATE" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;TARGET_UPD_${__P(RUN_ID)}&quot;,&quot;age&quot;:100,&quot;creatureType&quot;:&quot;GOLLUM&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring TARGET_UPD_${__P(RUN_ID)}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract ring id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdRingId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.ring.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Сохранить id в свойства" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">props.setProperty(&quot;UPD_ID&quot;, vars.get(&quot;createdId&quot;))
+props.setProperty(&quot;UPD_RING_ID&quot;, vars.get(&quot;createdRingId&quot;))</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create target for DELETE" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;TARGET_DEL_${__P(RUN_ID)}&quot;,&quot;age&quot;:100,&quot;creatureType&quot;:&quot;GOLLUM&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring TARGET_DEL_${__P(RUN_ID)}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract ring id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdRingId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.ring.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Сохранить id в свойства" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">props.setProperty(&quot;DEL_ID&quot;, vars.get(&quot;createdId&quot;))
+props.setProperty(&quot;DEL_RING_ID&quot;, vars.get(&quot;createdRingId&quot;))</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create target for UPDATE+DELETE" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;TARGET_MIX_${__P(RUN_ID)}&quot;,&quot;age&quot;:100,&quot;creatureType&quot;:&quot;GOLLUM&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring TARGET_MIX_${__P(RUN_ID)}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract ring id" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">createdRingId</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.ring.id</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Сохранить id в свойства" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">props.setProperty(&quot;MIX_ID&quot;, vars.get(&quot;createdId&quot;))
+props.setProperty(&quot;MIX_RING_ID&quot;, vars.get(&quot;createdRingId&quot;))</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Параллельное СОЗДАНИЕ объектов с разными именами" enabled="true">
+        <stringProp name="TestPlan.comments">Все потоки одновременно создают объекты с разными именами. Ожидается: у всех 200 (ложные конфликты SERIALIZABLE гасятся автоповтором)</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create creature" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;CRE_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;age&quot;:50,&quot;creatureType&quot;:&quot;ELF&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;creatureLocation&quot;:{&quot;name&quot;:&quot;JM city ${__P(RUN_ID)}_${__threadNum}&quot;,&quot;area&quot;:100.5,&quot;population&quot;:1000,&quot;governor&quot;:&quot;ELF&quot;,&quot;capital&quot;:false,&quot;populationDensity&quot;:10},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring CRE_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG1_&lt;код ответа&gt;
+def key = &quot;CNT_TG1_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 1" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="2. УНИКАЛЬНОСТЬ: одновременное создание объектов с ОДНИМ именем" enabled="true">
+        <stringProp name="TestPlan.comments">Все потоки одновременно создают объект с одним и тем же именем. Ожидается: ровно один 200, остальные 409 (имя занято)</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create SAME NAME creature" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;UNIQ_${__P(RUN_ID)}&quot;,&quot;age&quot;:50,&quot;creatureType&quot;:&quot;ELF&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring UNIQ_${__P(RUN_ID)}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 409" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG2_&lt;код ответа&gt;
+def key = &quot;CNT_TG2_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 2" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="3. Параллельное ИЗМЕНЕНИЕ одного объекта несколькими администраторами" enabled="true">
+        <stringProp name="TestPlan.comments">Все потоки (разные администраторы) одновременно меняют один и тот же объект. Ожидается: нет 500, итоговое состояние объекта - целиком от одного из запросов</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="UPDATE same object" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/modify/${__P(UPD_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;name&quot;:&quot;UPD_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;age&quot;:${__intSum(1000,${__threadNum})},&quot;creatureType&quot;:&quot;ELF&quot;,&quot;attackLevel&quot;:${__intSum(1000,${__threadNum})},&quot;coordinates&quot;:{&quot;x&quot;:${__threadNum},&quot;y&quot;:${__threadNum}},&quot;ring&quot;:{&quot;id&quot;:${__P(UPD_RING_ID)}}}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 409" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG3_&lt;код ответа&gt;
+def key = &quot;CNT_TG3_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 3" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="4. Параллельное УДАЛЕНИЕ одного объекта несколькими администраторами" enabled="true">
+        <stringProp name="TestPlan.comments">Все потоки одновременно удаляют один и тот же объект. Ожидается: ровно один 204, остальные 404</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DELETE same object" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/delete/${__P(DEL_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">DELETE</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 204, 404" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 204, 404. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;204&quot;, &quot;404&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG4_&lt;код ответа&gt;
+def key = &quot;CNT_TG4_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 4" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="5. Одновременное ИЗМЕНЕНИЕ и УДАЛЕНИЕ одного объекта" enabled="true">
+        <stringProp name="TestPlan.comments">Чётные потоки удаляют объект, нечётные меняют его. Ожидается: ровно один 204 на удаление; изменения - 200 (успели до удаления) или 404 (после); нет 500</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Чётный поток: удаляет" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(${__threadNum} % 2 == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="MIX: DELETE" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/delete/${__P(MIX_ID)}</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">DELETE</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Authorization" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${token}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+              <intProp name="groupSize">0</intProp>
+              <longProp name="timeoutInMs">20000</longProp>
+            </SyncTimer>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 204, 404" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Допустимые коды ответа: 204, 404. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;204&quot;, &quot;404&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Считаем ответы по кодам: CNT_TG5D_&lt;код ответа&gt;
+def key = &quot;CNT_TG5D_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Нечётный поток: меняет" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(${__threadNum} % 2 == 1)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="MIX: UPDATE" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/modify/${__P(MIX_ID)}</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;name&quot;:&quot;MIXUPD_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;age&quot;:77,&quot;creatureType&quot;:&quot;ELF&quot;,&quot;attackLevel&quot;:3,&quot;coordinates&quot;:{&quot;x&quot;:1,&quot;y&quot;:1},&quot;ring&quot;:{&quot;id&quot;:${__P(MIX_RING_ID)}}}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="Authorization" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${token}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+              <intProp name="groupSize">0</intProp>
+              <longProp name="timeoutInMs">20000</longProp>
+            </SyncTimer>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 404, 409" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Допустимые коды ответа: 200, 404, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;404&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Считаем ответы по кодам: CNT_TG5U_&lt;код ответа&gt;
+def key = &quot;CNT_TG5U_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 5" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="6. ИМПОРТ: все потоки одновременно импортируют один и тот же файл" enabled="true">
+        <stringProp name="TestPlan.comments">Файл из 3 записей. Ожидается: импорт проходит ровно у одного потока (200), у остальных 409 (имена заняты); в БД ровно 3 объекта, без дублей</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="IMPORT same file" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/import/upload</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">true</boolProp>
+          <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">
+            <collectionProp name="HTTPFileArgs.files">
+              <elementProp name="${__P(IMPORT_DIR)}/valid.yaml" elementType="HTTPFileArg">
+                <stringProp name="File.path">${__P(IMPORT_DIR)}/valid.yaml</stringProp>
+                <stringProp name="File.paramname">file</stringProp>
+                <stringProp name="File.mimetype">application/x-yaml</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 409" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG6_&lt;код ответа&gt;
+def key = &quot;CNT_TG6_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 6" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="7. ИМПОРТ с ошибкой: транзакция откатывается целиком" enabled="true">
+        <stringProp name="TestPlan.comments">Все потоки импортируют файл, где вторая запись неверна (x &gt; 735). Ожидается: везде 400; первая (корректная) запись НЕ должна появиться в БД</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="IMPORT invalid file" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/import/upload</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">true</boolProp>
+          <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">
+            <collectionProp name="HTTPFileArgs.files">
+              <elementProp name="${__P(IMPORT_DIR)}/invalid.yaml" elementType="HTTPFileArg">
+                <stringProp name="File.path">${__P(IMPORT_DIR)}/invalid.yaml</stringProp>
+                <stringProp name="File.paramname">file</stringProp>
+                <stringProp name="File.mimetype">application/x-yaml</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${token}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+            <intProp name="groupSize">0</intProp>
+            <longProp name="timeoutInMs">20000</longProp>
+          </SyncTimer>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 400" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 400. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;400&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Считаем ответы по кодам: CNT_TG7_&lt;код ответа&gt;
+def key = &quot;CNT_TG7_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 7" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="8. УНИКАЛЬНОСТЬ между импортом и обычным созданием" enabled="true">
+        <stringProp name="TestPlan.comments">Нечётные потоки импортируют файл с одной записью, чётные создают объект с тем же именем через форму. Ожидается: объект появляется ровно один раз (сумма успешных ответов = 1)</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,10)}</stringProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <OnceOnlyController guiclass="OnceOnlyControllerGui" testclass="OnceOnlyController" testname="Вход (один раз на поток)" enabled="true"/>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_${__threadNum}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">token</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Нечётный поток: импорт" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(${__threadNum} % 2 == 1)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="MIX NAME: IMPORT" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/import/upload</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.DO_MULTIPART_POST">true</boolProp>
+            <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">
+              <collectionProp name="HTTPFileArgs.files">
+                <elementProp name="${__P(IMPORT_DIR)}/mix.yaml" elementType="HTTPFileArg">
+                  <stringProp name="File.path">${__P(IMPORT_DIR)}/mix.yaml</stringProp>
+                  <stringProp name="File.paramname">file</stringProp>
+                  <stringProp name="File.mimetype">application/x-yaml</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Authorization" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${token}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+              <intProp name="groupSize">0</intProp>
+              <longProp name="timeoutInMs">20000</longProp>
+            </SyncTimer>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 409" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Допустимые коды ответа: 200, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Считаем ответы по кодам: CNT_TG8I_&lt;код ответа&gt;
+def key = &quot;CNT_TG8I_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Чётный поток: создание" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(${__threadNum} % 2 == 0)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="MIX NAME: CREATE" enabled="true">
+            <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/interact</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;name&quot;:&quot;MIX_${__P(RUN_ID)}&quot;,&quot;age&quot;:50,&quot;creatureType&quot;:&quot;ELF&quot;,&quot;attackLevel&quot;:10,&quot;coordinates&quot;:{&quot;x&quot;:100,&quot;y&quot;:200},&quot;ring&quot;:{&quot;name&quot;:&quot;JM ring MIX_${__P(RUN_ID)}&quot;,&quot;power&quot;:5,&quot;weight&quot;:2}}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Content-Type" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="Authorization" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${token}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <SyncTimer guiclass="TestBeanGUI" testclass="SyncTimer" testname="Одновременный старт всех потоков" enabled="true">
+              <intProp name="groupSize">0</intProp>
+              <longProp name="timeoutInMs">20000</longProp>
+            </SyncTimer>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200, 409" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Допустимые коды ответа: 200, 409. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;, &quot;409&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Подсчёт кодов ответа" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">// Считаем ответы по кодам: CNT_TG8C_&lt;код ответа&gt;
+def key = &quot;CNT_TG8C_&quot; + prev.getResponseCode()
+synchronized (props) {
+    int n = (props.getProperty(key) ?: &quot;0&quot;) as int
+    props.setProperty(key, String.valueOf(n + 1))
+}
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 8" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="9. ИСТОРИЯ ИМПОРТА: пользователь видит свои операции, администратор - все" enabled="true">
+        <stringProp name="TestPlan.comments">Обычный пользователь импортирует файл и видит в истории только свои операции; администратор видит операции разных пользователей</stringProp>
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login plain USER" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmplain_${__P(RUN_ID)}&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">plainToken</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="USER: import" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/import/upload</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">true</boolProp>
+          <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">
+            <collectionProp name="HTTPFileArgs.files">
+              <elementProp name="${__P(IMPORT_DIR)}/history.yaml" elementType="HTTPFileArg">
+                <stringProp name="File.path">${__P(IMPORT_DIR)}/history.yaml</stringProp>
+                <stringProp name="File.paramname">file</stringProp>
+                <stringProp name="File.mimetype">application/x-yaml</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${plainToken}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Успех, добавлен 1 объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.status == &quot;SUCCESS&quot; &amp;&amp; json.addedCount == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Ожидался SUCCESS и addedCount=1: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 200" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 200. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;200&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="USER: history" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/import/history?page=0</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${plainToken}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Только свои операции" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.content.size() &gt; 0 &amp;&amp; json.content.every { it.username == &quot;jmplain_${__P(RUN_ID)}&quot; })) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;В истории обычного пользователя есть чужие операции или она пуста: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login admin" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{&quot;username&quot;:&quot;jmu_${__P(RUN_ID)}_1&quot;,&quot;password&quot;:&quot;pass12345&quot;}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Content-Type" elementType="Header">
+                <stringProp name="Header.name">Content-Type</stringProp>
+                <stringProp name="Header.value">application/json</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract token" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">adminToken</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.accessToken</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">TOKEN_NOT_FOUND</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="ADMIN: history" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/import/history?page=0</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${adminToken}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Операции разных пользователей" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.content.collect { it.username }.unique().size() &gt; 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Администратор должен видеть операции нескольких пользователей: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты 9" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <PostThreadGroup guiclass="PostThreadGroupGui" testclass="PostThreadGroup" testname="tearDown: проверка итогов" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">0</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </PostThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 1: создание - все 200" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Проверка итогов сценария TG1
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+def checks = []
+def check = { String code, String actualStr, String rule, int threads -&gt;
+    int actual = actualStr as int
+    boolean ok
+    String expected
+    switch (rule) {
+        case &quot;N&quot;:   expected = String.valueOf(threads);     ok = (actual == threads); break
+        case &quot;N-1&quot;: expected = String.valueOf(threads - 1); ok = (actual == threads - 1); break
+        case &quot;&gt;=1&quot;: expected = &quot;&gt;= 1&quot;;                      ok = (actual &gt;= 1); break
+        case &quot;1&quot;:   expected = &quot;1&quot;;                         ok = (actual == 1); break
+        case &quot;0&quot;:   expected = &quot;0&quot;;                         ok = (actual == 0); break
+        default:    expected = rule; ok = (String.valueOf(actual) == rule)
+    }
+    return [ok: ok, text: &quot;код &quot; + code + &quot;: получено &quot; + actual + &quot;, ожидалось &quot; + expected + (ok ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;)]
+}
+checks &lt;&lt; check(&quot;200&quot;, props.getProperty(&quot;CNT_TG1_200&quot;) ?: &quot;0&quot;, &quot;N&quot;, n)
+// Любой код ответа, не перечисленный в правилах, считается ошибкой (например, 500)
+def known = [&quot;200&quot;]
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_TG1_&quot;) }.each { k -&gt;
+    String code = k.substring(&quot;CNT_TG1_&quot;.length())
+    if (!known.contains(code)) {
+        checks &lt;&lt; [ok: false, text: &quot;неожиданный код &quot; + code + &quot;: &quot; + props.getProperty(k) + &quot; раз - ОШИБКА&quot;]
+    }
+}
+boolean allOk = checks.every { it.ok }
+SampleResult.setSuccessful(allOk)
+SampleResult.setResponseMessage(allOk ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(checks.collect { it.text }.join(&quot;\n&quot;), &quot;UTF-8&quot;)
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 2: уникальность - ровно один 200, остальные 409" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Проверка итогов сценария TG2
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+def checks = []
+def check = { String code, String actualStr, String rule, int threads -&gt;
+    int actual = actualStr as int
+    boolean ok
+    String expected
+    switch (rule) {
+        case &quot;N&quot;:   expected = String.valueOf(threads);     ok = (actual == threads); break
+        case &quot;N-1&quot;: expected = String.valueOf(threads - 1); ok = (actual == threads - 1); break
+        case &quot;&gt;=1&quot;: expected = &quot;&gt;= 1&quot;;                      ok = (actual &gt;= 1); break
+        case &quot;1&quot;:   expected = &quot;1&quot;;                         ok = (actual == 1); break
+        case &quot;0&quot;:   expected = &quot;0&quot;;                         ok = (actual == 0); break
+        default:    expected = rule; ok = (String.valueOf(actual) == rule)
+    }
+    return [ok: ok, text: &quot;код &quot; + code + &quot;: получено &quot; + actual + &quot;, ожидалось &quot; + expected + (ok ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;)]
+}
+checks &lt;&lt; check(&quot;200&quot;, props.getProperty(&quot;CNT_TG2_200&quot;) ?: &quot;0&quot;, &quot;1&quot;, n)
+checks &lt;&lt; check(&quot;409&quot;, props.getProperty(&quot;CNT_TG2_409&quot;) ?: &quot;0&quot;, &quot;N-1&quot;, n)
+// Любой код ответа, не перечисленный в правилах, считается ошибкой (например, 500)
+def known = [&quot;200&quot;, &quot;409&quot;]
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_TG2_&quot;) }.each { k -&gt;
+    String code = k.substring(&quot;CNT_TG2_&quot;.length())
+    if (!known.contains(code)) {
+        checks &lt;&lt; [ok: false, text: &quot;неожиданный код &quot; + code + &quot;: &quot; + props.getProperty(k) + &quot; раз - ОШИБКА&quot;]
+    }
+}
+boolean allOk = checks.every { it.ok }
+SampleResult.setSuccessful(allOk)
+SampleResult.setResponseMessage(allOk ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(checks.collect { it.text }.join(&quot;\n&quot;), &quot;UTF-8&quot;)
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: сколько объектов с именем UNIQ" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=UNIQ_${__P(RUN_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="В БД ровно один объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Ожидался ровно один объект с этим именем: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 3: изменение одного объекта - нет 500, есть успешные" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+int ok = (props.getProperty(&quot;CNT_TG3_200&quot;) ?: &quot;0&quot;) as int
+int conflict = (props.getProperty(&quot;CNT_TG3_409&quot;) ?: &quot;0&quot;) as int
+boolean good = (ok &gt;= 1) &amp;&amp; (ok + conflict == n)
+SampleResult.setSuccessful(good)
+SampleResult.setResponseMessage(good ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(&quot;200: &quot; + ok + &quot;, 409: &quot; + conflict + &quot;, потоков: &quot; + n + (good ? &quot; - OK&quot; : &quot; - ОШИБКА (все ответы должны быть 200 или 409, хотя бы один 200)&quot;), &quot;UTF-8&quot;)</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: итоговое состояние изменяемого объекта" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view/${__P(UPD_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Состояние целиком от одного запроса" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+def m = (json.name =~ /UPD_\d+_(\d+)/)
+if (!m.find()) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Имя объекта не похоже на результат изменения: &quot; + prev.getResponseDataAsString())
+    return
+}
+int k = m.group(1) as int
+boolean ok = (json.age == 1000 + k) &amp;&amp; (json.attackLevel == 1000 + k) &amp;&amp;
+             (json.coordinates.x == k) &amp;&amp; (json.coordinates.y == k)
+if (!ok) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Поля объекта взяты от разных запросов (смешанное обновление): &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 4: удаление - ровно один 204, остальные 404" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Проверка итогов сценария TG4
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+def checks = []
+def check = { String code, String actualStr, String rule, int threads -&gt;
+    int actual = actualStr as int
+    boolean ok
+    String expected
+    switch (rule) {
+        case &quot;N&quot;:   expected = String.valueOf(threads);     ok = (actual == threads); break
+        case &quot;N-1&quot;: expected = String.valueOf(threads - 1); ok = (actual == threads - 1); break
+        case &quot;&gt;=1&quot;: expected = &quot;&gt;= 1&quot;;                      ok = (actual &gt;= 1); break
+        case &quot;1&quot;:   expected = &quot;1&quot;;                         ok = (actual == 1); break
+        case &quot;0&quot;:   expected = &quot;0&quot;;                         ok = (actual == 0); break
+        default:    expected = rule; ok = (String.valueOf(actual) == rule)
+    }
+    return [ok: ok, text: &quot;код &quot; + code + &quot;: получено &quot; + actual + &quot;, ожидалось &quot; + expected + (ok ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;)]
+}
+checks &lt;&lt; check(&quot;204&quot;, props.getProperty(&quot;CNT_TG4_204&quot;) ?: &quot;0&quot;, &quot;1&quot;, n)
+checks &lt;&lt; check(&quot;404&quot;, props.getProperty(&quot;CNT_TG4_404&quot;) ?: &quot;0&quot;, &quot;N-1&quot;, n)
+// Любой код ответа, не перечисленный в правилах, считается ошибкой (например, 500)
+def known = [&quot;204&quot;, &quot;404&quot;]
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_TG4_&quot;) }.each { k -&gt;
+    String code = k.substring(&quot;CNT_TG4_&quot;.length())
+    if (!known.contains(code)) {
+        checks &lt;&lt; [ok: false, text: &quot;неожиданный код &quot; + code + &quot;: &quot; + props.getProperty(k) + &quot; раз - ОШИБКА&quot;]
+    }
+}
+boolean allOk = checks.every { it.ok }
+SampleResult.setSuccessful(allOk)
+SampleResult.setResponseMessage(allOk ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(checks.collect { it.text }.join(&quot;\n&quot;), &quot;UTF-8&quot;)
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: удалённый объект исчез" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view/${__P(DEL_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 404" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 404. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;404&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 5: изменение+удаление - один 204 на удаление, нет 500" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+int deleters = (int) (n / 2)            // чётные потоки
+int updaters = n - deleters             // нечётные потоки
+int d204 = (props.getProperty(&quot;CNT_TG5D_204&quot;) ?: &quot;0&quot;) as int
+int d404 = (props.getProperty(&quot;CNT_TG5D_404&quot;) ?: &quot;0&quot;) as int
+int u200 = (props.getProperty(&quot;CNT_TG5U_200&quot;) ?: &quot;0&quot;) as int
+int u404 = (props.getProperty(&quot;CNT_TG5U_404&quot;) ?: &quot;0&quot;) as int
+int u409 = (props.getProperty(&quot;CNT_TG5U_409&quot;) ?: &quot;0&quot;) as int
+boolean good = (d204 == 1) &amp;&amp; (d204 + d404 == deleters) &amp;&amp; (u200 + u404 + u409 == updaters)
+SampleResult.setSuccessful(good)
+SampleResult.setResponseMessage(good ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(&quot;удаление: 204=&quot; + d204 + &quot;, 404=&quot; + d404 + &quot; (потоков &quot; + deleters + &quot;); изменение: 200=&quot; + u200 + &quot;, 404=&quot; + u404 + &quot;, 409=&quot; + u409 + &quot; (потоков &quot; + updaters + &quot;)&quot; + (good ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;), &quot;UTF-8&quot;)</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: объект MIX удалён" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view/${__P(MIX_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Допустимые коды: 404" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">// Допустимые коды ответа: 404. Они считаются успехом (даже 4xx - так задумано сценарием).
+// Любой другой код (особенно 500) - ошибка
+def allowed = [&quot;404&quot;]
+boolean ok = allowed.contains(prev.getResponseCode())
+prev.setSuccessful(ok)
+if (!ok) {
+    prev.setResponseMessage(&quot;Недопустимый код ответа &quot; + prev.getResponseCode() + &quot;, ожидалось: &quot; + allowed.join(&quot;, &quot;))
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PostProcessor>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 6: импорт одного файла - ровно один 200, остальные 409" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Проверка итогов сценария TG6
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+def checks = []
+def check = { String code, String actualStr, String rule, int threads -&gt;
+    int actual = actualStr as int
+    boolean ok
+    String expected
+    switch (rule) {
+        case &quot;N&quot;:   expected = String.valueOf(threads);     ok = (actual == threads); break
+        case &quot;N-1&quot;: expected = String.valueOf(threads - 1); ok = (actual == threads - 1); break
+        case &quot;&gt;=1&quot;: expected = &quot;&gt;= 1&quot;;                      ok = (actual &gt;= 1); break
+        case &quot;1&quot;:   expected = &quot;1&quot;;                         ok = (actual == 1); break
+        case &quot;0&quot;:   expected = &quot;0&quot;;                         ok = (actual == 0); break
+        default:    expected = rule; ok = (String.valueOf(actual) == rule)
+    }
+    return [ok: ok, text: &quot;код &quot; + code + &quot;: получено &quot; + actual + &quot;, ожидалось &quot; + expected + (ok ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;)]
+}
+checks &lt;&lt; check(&quot;200&quot;, props.getProperty(&quot;CNT_TG6_200&quot;) ?: &quot;0&quot;, &quot;1&quot;, n)
+checks &lt;&lt; check(&quot;409&quot;, props.getProperty(&quot;CNT_TG6_409&quot;) ?: &quot;0&quot;, &quot;N-1&quot;, n)
+// Любой код ответа, не перечисленный в правилах, считается ошибкой (например, 500)
+def known = [&quot;200&quot;, &quot;409&quot;]
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_TG6_&quot;) }.each { k -&gt;
+    String code = k.substring(&quot;CNT_TG6_&quot;.length())
+    if (!known.contains(code)) {
+        checks &lt;&lt; [ok: false, text: &quot;неожиданный код &quot; + code + &quot;: &quot; + props.getProperty(k) + &quot; раз - ОШИБКА&quot;]
+    }
+}
+boolean allOk = checks.every { it.ok }
+SampleResult.setSuccessful(allOk)
+SampleResult.setResponseMessage(allOk ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(checks.collect { it.text }.join(&quot;\n&quot;), &quot;UTF-8&quot;)
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: IMP_1 ровно один раз" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=IMP_${__P(RUN_ID)}_1</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Ровно один объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Объект должен существовать ровно в одном экземпляре: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: IMP_2 ровно один раз" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=IMP_${__P(RUN_ID)}_2</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Ровно один объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Объект должен существовать ровно в одном экземпляре: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: IMP_3 ровно один раз" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=IMP_${__P(RUN_ID)}_3</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Ровно один объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Объект должен существовать ровно в одном экземпляре: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 7: импорт с ошибкой - у всех 400" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">// Проверка итогов сценария TG7
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+def checks = []
+def check = { String code, String actualStr, String rule, int threads -&gt;
+    int actual = actualStr as int
+    boolean ok
+    String expected
+    switch (rule) {
+        case &quot;N&quot;:   expected = String.valueOf(threads);     ok = (actual == threads); break
+        case &quot;N-1&quot;: expected = String.valueOf(threads - 1); ok = (actual == threads - 1); break
+        case &quot;&gt;=1&quot;: expected = &quot;&gt;= 1&quot;;                      ok = (actual &gt;= 1); break
+        case &quot;1&quot;:   expected = &quot;1&quot;;                         ok = (actual == 1); break
+        case &quot;0&quot;:   expected = &quot;0&quot;;                         ok = (actual == 0); break
+        default:    expected = rule; ok = (String.valueOf(actual) == rule)
+    }
+    return [ok: ok, text: &quot;код &quot; + code + &quot;: получено &quot; + actual + &quot;, ожидалось &quot; + expected + (ok ? &quot; - OK&quot; : &quot; - ОШИБКА&quot;)]
+}
+checks &lt;&lt; check(&quot;400&quot;, props.getProperty(&quot;CNT_TG7_400&quot;) ?: &quot;0&quot;, &quot;N&quot;, n)
+// Любой код ответа, не перечисленный в правилах, считается ошибкой (например, 500)
+def known = [&quot;400&quot;]
+props.stringPropertyNames().findAll { it.startsWith(&quot;CNT_TG7_&quot;) }.each { k -&gt;
+    String code = k.substring(&quot;CNT_TG7_&quot;.length())
+    if (!known.contains(code)) {
+        checks &lt;&lt; [ok: false, text: &quot;неожиданный код &quot; + code + &quot;: &quot; + props.getProperty(k) + &quot; раз - ОШИБКА&quot;]
+    }
+}
+boolean allOk = checks.every { it.ok }
+SampleResult.setSuccessful(allOk)
+SampleResult.setResponseMessage(allOk ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(checks.collect { it.text }.join(&quot;\n&quot;), &quot;UTF-8&quot;)
+</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: после отката первой записи нет" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=IMPBAD_${__P(RUN_ID)}_1</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Откат: объектов нет" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 0)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Корректная запись из файла с ошибкой попала в БД - откат не сработал: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="CHECK 8: импорт против создания - успешный ответ ровно один" enabled="true">
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="script">int i200 = (props.getProperty(&quot;CNT_TG8I_200&quot;) ?: &quot;0&quot;) as int
+int i409 = (props.getProperty(&quot;CNT_TG8I_409&quot;) ?: &quot;0&quot;) as int
+int c200 = (props.getProperty(&quot;CNT_TG8C_200&quot;) ?: &quot;0&quot;) as int
+int c409 = (props.getProperty(&quot;CNT_TG8C_409&quot;) ?: &quot;0&quot;) as int
+int n = (props.getProperty(&quot;THREADS&quot;) ?: &quot;10&quot;) as int
+boolean good = (i200 + c200 == 1) &amp;&amp; (i200 + i409 + c200 + c409 == n)
+SampleResult.setSuccessful(good)
+SampleResult.setResponseMessage(good ? &quot;OK&quot; : &quot;ОШИБКА&quot;)
+SampleResult.setResponseData(&quot;импорт: 200=&quot; + i200 + &quot;, 409=&quot; + i409 + &quot;; создание: 200=&quot; + c200 + &quot;, 409=&quot; + c409 + (good ? &quot; - OK&quot; : &quot; - ОШИБКА (успешным должен быть ровно один запрос)&quot;), &quot;UTF-8&quot;)</stringProp>
+          <stringProp name="scriptLanguage">groovy</stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DB: MIX_ ровно один раз" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(HOST,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(PORT,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/view?filterBy=name&amp;filter=MIX_${__P(RUN_ID)}</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Headers" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="Authorization" elementType="Header">
+                <stringProp name="Header.name">Authorization</stringProp>
+                <stringProp name="Header.value">Bearer ${__P(SETUP_TOKEN)}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="Ровно один объект" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">import groovy.json.JsonSlurper
+def json = new JsonSlurper().parseText(prev.getResponseDataAsString())
+if (!(json.totalElements == 1)) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage(&quot;Имя должно встречаться ровно один раз: &quot; + prev.getResponseDataAsString())
+}
+</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Результаты проверок" enabled="true">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>true</responseData>
+              <samplerData>true</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+      </hashTree>
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>true</responseData>
+            <samplerData>true</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+      <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="Summary Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>
